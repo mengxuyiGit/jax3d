@@ -12,10 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 
 scene_type = "synthetic"
 object_name = "chair"
-scene_dir = "datasets/nerf_synthetic/"+object_name
+exp_suffix = '_grid_scale_4.0'
+scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
+# training
+os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+
+scene_type = "zju"
+object_name = "freeview_0_cam430" 
+exp_suffix = '_dvgo_K_grid_scale_3.0'
+scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# testing 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+
+# scene_type = "synthetic"
+# object_name = "abo_horizontal"
+# exp_suffix = '_synthetic_setting'
+# scene_dir = '/data/xymeng/Data/fyp/ZJU_MOCAP/'+object_name
+
+from ipdb import set_trace as st
 
 # synthetic
 # chair drums ficus hotdog lego materials mic ship
@@ -33,7 +51,7 @@ scene_dir = "datasets/nerf_synthetic/"+object_name
 import copy
 import gc
 import json
-import os
+
 import numpy
 import cv2
 from tqdm import tqdm
@@ -51,12 +69,16 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from multiprocessing.pool import ThreadPool
 
+
+
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 print(jax.local_devices())
-if len(jax.local_devices())!=8:
-  print("ERROR: need 8 v100 GPUs")
-  1/0
-weights_dir = "weights"
-samples_dir = "samples"
+# if len(jax.local_devices())!=8:
+#   print("ERROR: need 8 v100 GPUs")
+#   1/0
+weights_dir = os.path.join('experiments',object_name+exp_suffix, "weights")
+samples_dir = os.path.join('experiments',object_name+exp_suffix, "samples")
+print("Experiment results saved in", os.path.join('experiments',object_name+exp_suffix))
 if not os.path.exists(weights_dir):
   os.makedirs(weights_dir)
 if not os.path.exists(samples_dir):
@@ -75,7 +97,14 @@ elif scene_type=="forwardfacing":
   white_bkgd = False
 elif scene_type=="real360":
   white_bkgd = False
+elif scene_type=="zju":
+  white_bkgd = True
 
+# about inverse_y
+inverse_y = False
+if scene_type=="zju":
+  inverse_y = True
+  # pass
 
 #https://github.com/google-research/google-research/blob/master/snerg/nerf/datasets.py
 
@@ -83,6 +112,71 @@ elif scene_type=="real360":
 if scene_type=="synthetic":
 
   def load_blender(data_dir, split):
+    with open(
+        os.path.join(data_dir, "transforms_{}.json".format(split)), "r") as fp:
+      meta = json.load(fp)
+
+    cams = []
+    paths = []
+    for i in range(len(meta["frames"])):
+      frame = meta["frames"][i]
+      cams.append(np.array(frame["transform_matrix"], dtype=np.float32))
+
+      fname = os.path.join(data_dir, frame["file_path"] + ".png") # normal synthetic
+      # fname = os.path.join(data_dir, os.path.basename(frame["file_path"]) + ".png") # abo
+      paths.append(fname)
+
+    def image_read_fn(fname):
+      with open(fname, "rb") as imgin:
+        print('fname synthetic', fname) # correct: fname synthetic /data/xymeng/Data/ucsd/nerf_synthetic/chair/./test/r_168.png
+        # # wrong (abo): '/home/xuyi/Data/renderer/Mesh2PointCloudwithMaterial/output_fyp/B01D3C7Z4A/render///r_0.png
+        # try:
+        image = np.array(Image.open(imgin), dtype=np.float32) / 255.
+        # except:
+        #   pass
+      return image
+    with ThreadPool() as pool:
+      images = pool.map(image_read_fn, paths)
+      pool.close()
+      pool.join()
+
+    images = np.stack(images, axis=0)
+    if white_bkgd:
+      images = (images[..., :3] * images[..., -1:] + (1. - images[..., -1:]))
+    else:
+      images = images[..., :3] * images[..., -1:]
+
+    h, w = images.shape[1:3]
+    camera_angle_x = float(meta["camera_angle_x"])
+    focal = .5 * w / np.tan(.5 * camera_angle_x)
+
+
+    hwf = np.array([h, w, focal], dtype=np.float32)
+    poses = np.stack(cams, axis=0)
+    return {'images' : images, 'c2w' : poses, 'hwf' : hwf}
+
+  data = {'train' : load_blender(scene_dir, 'train'),
+          'test' : load_blender(scene_dir, 'test')}
+
+  splits = ['train', 'test']
+  for s in splits:
+    print(s)
+    for k in data[s]:
+      print(f'  {k}: {data[s][k].shape}')
+
+  images, poses, hwf = data['train']['images'], data['train']['c2w'], data['train']['hwf']
+  write_floatpoint_image(samples_dir+"/training_image_sample.png",images[0])
+
+  for i in range(3):
+    plt.figure()
+    plt.scatter(poses[:,i,3], poses[:,(i+1)%3,3])
+    plt.axis('equal')
+    plt.savefig(samples_dir+"/training_camera"+str(i)+".png")
+
+elif scene_type=="zju":
+
+
+  def load_zju(data_dir, split):
     with open(
         os.path.join(data_dir, "transforms_{}.json".format(split)), "r") as fp:
       meta = json.load(fp)
@@ -106,21 +200,26 @@ if scene_type=="synthetic":
       pool.join()
 
     images = np.stack(images, axis=0)
-    if white_bkgd:
-      images = (images[..., :3] * images[..., -1:] + (1. - images[..., -1:]))
-    else:
-      images = images[..., :3] * images[..., -1:]
+
+    if images.shape[-1]==4:
+      if white_bkgd:
+        images = (images[..., :3] * images[..., -1:] + (1. - images[..., -1:]))
+      else:
+        images = images[..., :3] * images[..., -1:]
 
     h, w = images.shape[1:3]
-    camera_angle_x = float(meta["camera_angle_x"])
-    focal = .5 * w / np.tan(.5 * camera_angle_x)
+    K_zju = np.asarray(meta['intrinsics'])
+    focal = K_zju[0][0]
+    # camera_angle_x = float(meta["camera_angle_x"])
+    # focal = .5 * w / np.tan(.5 * camera_angle_x)
 
     hwf = np.array([h, w, focal], dtype=np.float32)
+  
     poses = np.stack(cams, axis=0)
     return {'images' : images, 'c2w' : poses, 'hwf' : hwf}
 
-  data = {'train' : load_blender(scene_dir, 'train'),
-          'test' : load_blender(scene_dir, 'test')}
+  data = {'train' : load_zju(scene_dir, 'train'),
+          'test' : load_zju(scene_dir, 'test')}
 
   splits = ['train', 'test']
   for s in splits:
@@ -351,9 +450,21 @@ def sinusoidal_encoding(position, minimum_frequency_power,
 
 def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
-  homog = np.ones_like(pixel_coords[..., :1])
-  pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
-  cam_dirs = matmul(pix2cam, pixel_dirs)
+
+  if scene_type=='zju':
+    K = np.asarray([[537.1407,   0.0000, 271.4171],
+            [  0.0000, 537.7115, 242.4418],
+            [  0.0000,   0.0000,   1.0000]])
+    # print('scene_type==zju',pixel_coords.shape)
+    i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
+    cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
+  
+  else:
+    homog = np.ones_like(pixel_coords[..., :1])
+    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
+    cam_dirs = matmul(pix2cam, pixel_dirs)
+
+
   ray_dirs = matmul(cam2world[..., :3, :3], cam_dirs)[..., 0]
   ray_origins = np.broadcast_to(cam2world[..., :3, 3], ray_dirs.shape)
 
@@ -365,16 +476,42 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
 
 def pix2cam_matrix(height, width, focal):
   """Inverse intrinsic matrix for a pinhole camera."""
-  return  np.array([
-      [1./focal, 0, -.5 * width / focal],
-      [0, -1./focal, .5 * height / focal],
+  if scene_type=="zju":
+    
+   # for ZJU Mocap
+    inverse_y_mul = np.array([
+      [1., 0, 0],
+      [0, -1., 0],
       [0, 0, -1.],
-  ])
+    ])
+    K_zju = np.asarray([[537.1407,   0.0000, 271.4171],
+            [  0.0000, 537.7115, 242.4418],
+            [  0.0000,   0.0000,   1.0000]])
+    inv_K = np.linalg.inv(K_zju)
+    # st()
+    return np.matmul(inv_K, inverse_y_mul)
+
+    # return np.array([
+    #   [1./focal,    0,          .5 * width / focal],
+    #   [0,           1./focal,   -.5 * height / focal],
+    #   [0,           0,          1.],
+    # ])  this is wrong for ZJU !!! 
+
+  else:
+    return  np.array([
+        [1./focal,  0,          -.5 * width / focal],
+        [0,         -1./focal,  .5 * height / focal],
+        [0,         0,          -1.],
+      ])
 
 def camera_ray_batch(cam2world, hwf):
   """Generate rays for a pinhole camera with given extrinsic and intrinsic."""
   height, width = int(hwf[0]), int(hwf[1])
   pix2cam = pix2cam_matrix(*hwf)
+  # if inverse_y:
+  #   pixel_coords = np.stack(np.meshgrid(np.arange(width), -np.arange(height)), axis=-1)
+  # else:
+  #   st()
   pixel_coords = np.stack(np.meshgrid(np.arange(width), np.arange(height)), axis=-1)
   return generate_rays(pixel_coords, pix2cam, cam2world)
 
@@ -384,6 +521,9 @@ def random_ray_batch(rng, batch_size, data):
   cam_ind = random.randint(keys[0], [batch_size], 0, data['c2w'].shape[0])
   y_ind = random.randint(keys[1], [batch_size], 0, data['images'].shape[1])
   x_ind = random.randint(keys[2], [batch_size], 0, data['images'].shape[2])
+  # if inverse_y:
+  #   pixel_coords = np.stack([x_ind, -y_ind], axis=-1)
+  # else:
   pixel_coords = np.stack([x_ind, y_ind], axis=-1)
   pix2cam = pix2cam_matrix(*data['hwf'])
   cam2world = data['c2w'][cam_ind, :3, :4]
@@ -418,8 +558,22 @@ def lr_fn(step, max_steps, lr0, lr1, lr_delay_steps=20000, lr_delay_mult=0.1):
 
 if scene_type=="synthetic":
   scene_grid_scale = 1.2
+  scene_grid_scale = 4.0
   if "hotdog" in scene_dir or "mic" in scene_dir or "ship" in scene_dir:
     scene_grid_scale = 1.5
+  grid_min = np.array([-1, -1, -1]) * scene_grid_scale
+  grid_max = np.array([ 1,  1,  1]) * scene_grid_scale
+  point_grid_size = 128
+
+  def get_taper_coord(p):
+    return p
+  def inverse_taper_coord(p):
+    return p
+
+elif scene_type=="zju":
+# TODO: modify scale for zju data
+  scene_grid_scale = 3.0
+  
   grid_min = np.array([-1, -1, -1]) * scene_grid_scale
   grid_max = np.array([ 1,  1,  1]) * scene_grid_scale
   point_grid_size = 128
@@ -512,6 +666,81 @@ def get_acc_grid_masks(taper_positions, acc_grid):
 #compute ray-gridcell intersections
 
 if scene_type=="synthetic":
+
+  def gridcell_from_rays(rays, acc_grid, keep_num, threshold):
+    ray_origins = rays[0]
+    ray_directions = rays[1]
+
+    dtype = ray_origins.dtype
+    batch_shape = ray_origins.shape[:-1]
+    small_step = 1e-5
+    epsilon = 1e-5
+
+    ox = ray_origins[..., 0:1]
+    oy = ray_origins[..., 1:2]
+    oz = ray_origins[..., 2:3]
+
+    dx = ray_directions[..., 0:1]
+    dy = ray_directions[..., 1:2]
+    dz = ray_directions[..., 2:3]
+
+    dxm = (np.abs(dx)<epsilon).astype(dtype)
+    dym = (np.abs(dy)<epsilon).astype(dtype)
+    dzm = (np.abs(dz)<epsilon).astype(dtype)
+
+    #avoid zero div
+    dx = dx+dxm
+    dy = dy+dym
+    dz = dz+dzm
+
+    layers = np.arange(point_grid_size+1,dtype=dtype)/point_grid_size #[0,1]
+    layers = np.reshape(layers, [1]*len(batch_shape)+[point_grid_size+1])
+    layers = np.broadcast_to(layers, list(batch_shape)+[point_grid_size+1])
+
+    tx = ((layers*(grid_max[0]-grid_min[0])+grid_min[0])-ox)/dx
+    ty = ((layers*(grid_max[1]-grid_min[1])+grid_min[1])-oy)/dy
+    tz = ((layers*(grid_max[2]-grid_min[2])+grid_min[2])-oz)/dz
+
+    tx = tx*(1-dxm) + 1000*dxm
+    ty = ty*(1-dym) + 1000*dym
+    tz = tz*(1-dzm) + 1000*dzm
+
+    txyz = np.concatenate([tx, ty, tz], axis=-1)
+    txyzm = (txyz<=0).astype(dtype)
+    txyz = txyz*(1-txyzm) + 1000*txyzm
+
+
+    #compute mask from acc_grid
+    txyz = txyz + small_step
+    world_positions = ray_origins[..., None, :] + \
+                      ray_directions[..., None, :] * txyz[..., None]
+    acc_grid_masks = get_acc_grid_masks(world_positions, acc_grid)
+    #remove empty cells for faster training
+    txyzm = (acc_grid_masks<threshold).astype(dtype)
+    txyz = txyz*(1-txyzm) + 1000*txyzm
+
+    txyz = np.sort(txyz, axis=-1)
+    txyz = txyz[..., :keep_num]
+
+
+    world_positions = ray_origins[..., None, :] + \
+                      ray_directions[..., None, :] * txyz[..., None]
+
+
+    grid_positions = (world_positions - grid_min) * \
+                      (point_grid_size / (grid_max - grid_min) )
+
+    grid_masks = (grid_positions[..., 0]>=1) & (grid_positions[..., 0]<point_grid_size-1) \
+                & (grid_positions[..., 1]>=1) & (grid_positions[..., 1]<point_grid_size-1) \
+                & (grid_positions[..., 2]>=1) & (grid_positions[..., 2]<point_grid_size-1)
+
+    grid_positions = grid_positions*grid_masks[..., None] \
+              + np.logical_not(grid_masks[..., None]) #min=1,max=point_grid_size-2
+    grid_indices = grid_positions.astype(np.int32)
+
+    return grid_indices, grid_masks
+
+elif scene_type=="zju":
 
   def gridcell_from_rays(rays, acc_grid, keep_num, threshold):
     ray_origins = rays[0]
@@ -1389,6 +1618,10 @@ if scene_type=="synthetic":
   selected_test_index = 97
   preview_image_height = 800
 
+elif scene_type=="zju":
+  selected_test_index = 58
+  preview_image_height = 512
+
 elif scene_type=="forwardfacing":
   selected_test_index = 0
   preview_image_height = 756//2
@@ -1488,8 +1721,12 @@ t_total = 0.0
 t_last = 0.0
 i_last = step_init
 
+# TODO: training the original required interations
 training_iters = 200000
 train_iters_cont = 300000
+# # for faster validation
+# training_iters = 50000
+# train_iters_cont = 75000
 if scene_type=="real360":
   training_iters = 300000
 
@@ -1502,6 +1739,8 @@ for i in tqdm(range(step_init, training_iters + 1)):
   wbinary = 0.0
 
   if scene_type=="synthetic":
+    wdistortion = 0.0
+  elif scene_type=="zju":
     wdistortion = 0.0
   elif scene_type=="forwardfacing":
     wdistortion = 0.0 if i<10000 else 0.01

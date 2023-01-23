@@ -12,21 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 scene_type = "synthetic"
 object_name = "chair"
-exp_suffix = ''
 scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
-scene_type = "zju"
-object_name = "freeview_0_cam430" 
-exp_suffix = '_dvgo_K_grid_scale_3.0'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
- # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3' 
+# scene_type = "zju"
+# object_name = "freeview_0_wbkg"
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
 
+from ipdb import set_trace as st
 
 # synthetic
 # chair drums ficus hotdog lego materials mic ship
@@ -39,14 +34,12 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 # fulllivingroom kitchencounter kitchenlego officebonsai
 
 #%% --------------------------------------------------------------------------------
-# # Binarize - optimize density and color
-#%% --------------------------------------------------------------------------------
 # ## General imports
 #%%
 import copy
 import gc
 import json
-
+import os
 import numpy
 import cv2
 from tqdm import tqdm
@@ -64,15 +57,19 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from multiprocessing.pool import ThreadPool
 
+# training
+os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+# testing 
+# os.environ['CUDA_VISIBLE_DEVICES'] = '2,3' 
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 print(jax.local_devices())
 # if len(jax.local_devices())!=8:
 #   print("ERROR: need 8 v100 GPUs")
 #   1/0
 # weights_dir = "weights"
 # samples_dir = "samples"
-weights_dir = os.path.join('experiments',object_name+exp_suffix, "weights")
-samples_dir = os.path.join('experiments',object_name+exp_suffix, "samples")
-print("Loading saved weights from", os.path.join('experiments',object_name+exp_suffix))
+weights_dir = os.path.join('experiments',object_name, "weights")
+samples_dir = os.path.join('experiments',object_name, "samples")
 if not os.path.exists(weights_dir):
   os.makedirs(weights_dir)
 if not os.path.exists(samples_dir):
@@ -81,7 +78,7 @@ def write_floatpoint_image(name,img):
   img = numpy.clip(numpy.array(img)*255,0,255).astype(numpy.uint8)
   cv2.imwrite(name,img[:,:,::-1])
 #%% --------------------------------------------------------------------------------
-# ## Load the dataset.
+# ## Load the dataset
 #%%
 # """ Load dataset """
 
@@ -91,9 +88,8 @@ elif scene_type=="forwardfacing":
   white_bkgd = False
 elif scene_type=="real360":
   white_bkgd = False
-elif scene_type=="zju":
-  white_bkgd = True
-
+# elif scene_type=="zju":
+#   white_bkgd = True
 
 #https://github.com/google-research/google-research/blob/master/snerg/nerf/datasets.py
 
@@ -157,6 +153,7 @@ if scene_type=="synthetic":
 
 elif scene_type=="zju":
 
+
   def load_zju(data_dir, split):
     with open(
         os.path.join(data_dir, "transforms_{}.json".format(split)), "r") as fp:
@@ -181,21 +178,17 @@ elif scene_type=="zju":
       pool.join()
 
     images = np.stack(images, axis=0)
-
-    if images.shape[-1]==4:
-      if white_bkgd:
-        images = (images[..., :3] * images[..., -1:] + (1. - images[..., -1:]))
-      else:
-        images = images[..., :3] * images[..., -1:]
+    st()
+    if white_bkgd:
+      images = (images[..., :3] * images[..., -1:] + (1. - images[..., -1:]))
+    else:
+      images = images[..., :3] * images[..., -1:]
 
     h, w = images.shape[1:3]
-    K_zju = np.asarray(meta['intrinsics'])
-    focal = K_zju[0][0]
-    # camera_angle_x = float(meta["camera_angle_x"])
-    # focal = .5 * w / np.tan(.5 * camera_angle_x)
+    camera_angle_x = float(meta["camera_angle_x"])
+    focal = .5 * w / np.tan(.5 * camera_angle_x)
 
     hwf = np.array([h, w, focal], dtype=np.float32)
-  
     poses = np.stack(cams, axis=0)
     return {'images' : images, 'c2w' : poses, 'hwf' : hwf}
 
@@ -431,21 +424,9 @@ def sinusoidal_encoding(position, minimum_frequency_power,
 
 def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
-
-  if scene_type=='zju':
-    K = np.asarray([[537.1407,   0.0000, 271.4171],
-            [  0.0000, 537.7115, 242.4418],
-            [  0.0000,   0.0000,   1.0000]])
-    # print('scene_type==zju',pixel_coords.shape)
-    i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
-    cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
-  
-  else:
-    homog = np.ones_like(pixel_coords[..., :1])
-    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
-    cam_dirs = matmul(pix2cam, pixel_dirs)
-
-
+  homog = np.ones_like(pixel_coords[..., :1])
+  pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
+  cam_dirs = matmul(pix2cam, pixel_dirs)
   ray_dirs = matmul(cam2world[..., :3, :3], cam_dirs)[..., 0]
   ray_origins = np.broadcast_to(cam2world[..., :3, 3], ray_dirs.shape)
 
@@ -463,25 +444,14 @@ def pix2cam_matrix(height, width, focal):
       [0, 0, -1.],
   ])
 
-def camera_ray_batch_xxxxx_original(cam2world, hwf):
+def camera_ray_batch(cam2world, hwf):
   """Generate rays for a pinhole camera with given extrinsic and intrinsic."""
   height, width = int(hwf[0]), int(hwf[1])
   pix2cam = pix2cam_matrix(*hwf)
   pixel_coords = np.stack(np.meshgrid(np.arange(width), np.arange(height)), axis=-1)
   return generate_rays(pixel_coords, pix2cam, cam2world)
 
-def camera_ray_batch(cam2world, hwf): ### antialiasing by supersampling
-  """Generate rays for a pinhole camera with given extrinsic and intrinsic."""
-  height, width = int(hwf[0]), int(hwf[1])
-  pix2cam = pix2cam_matrix(*hwf)
-  x_ind, y_ind = np.meshgrid(np.arange(width), np.arange(height))
-  pixel_coords = np.stack([x_ind-0.25, y_ind-0.25, x_ind+0.25, y_ind-0.25,
-                  x_ind-0.25, y_ind+0.25, x_ind+0.25, y_ind+0.25], axis=-1)
-  pixel_coords = np.reshape(pixel_coords, [height,width,4,2])
-
-  return generate_rays(pixel_coords, pix2cam, cam2world)
-
-def random_ray_batch_xxxxx_original(rng, batch_size, data):
+def random_ray_batch(rng, batch_size, data):
   """Generate a random batch of ray data."""
   keys = random.split(rng, 3)
   cam_ind = random.randint(keys[0], [batch_size], 0, data['c2w'].shape[0])
@@ -490,26 +460,6 @@ def random_ray_batch_xxxxx_original(rng, batch_size, data):
   pixel_coords = np.stack([x_ind, y_ind], axis=-1)
   pix2cam = pix2cam_matrix(*data['hwf'])
   cam2world = data['c2w'][cam_ind, :3, :4]
-  rays = generate_rays(pixel_coords, pix2cam, cam2world)
-  pixels = data['images'][cam_ind, y_ind, x_ind]
-  return rays, pixels
-
-def random_ray_batch(rng, batch_size, data): ### antialiasing by supersampling
-  """Generate a random batch of ray data."""
-  keys = random.split(rng, 3)
-  cam_ind = random.randint(keys[0], [batch_size], 0, data['c2w'].shape[0])
-  y_ind = random.randint(keys[1], [batch_size], 0, data['images'].shape[1])
-  y_ind_f = y_ind.astype(np.float32)
-  x_ind = random.randint(keys[2], [batch_size], 0, data['images'].shape[2])
-  x_ind_f = x_ind.astype(np.float32)
-  pixel_coords = np.stack([x_ind_f-0.25, y_ind_f-0.25, x_ind_f+0.25, y_ind_f-0.25,
-                  x_ind_f-0.25, y_ind_f+0.25, x_ind_f+0.25, y_ind_f+0.25], axis=-1)
-  pixel_coords = np.reshape(pixel_coords, [batch_size,4,2])
-  pix2cam = pix2cam_matrix(*data['hwf'])
-  cam_ind_x4 = np.tile(cam_ind[..., None], [1,4])
-  cam_ind_x4 = np.reshape(cam_ind_x4, [-1])
-  cam2world = data['c2w'][cam_ind_x4, :3, :4]
-  cam2world = np.reshape(cam2world, [batch_size,4,3,4])
   rays = generate_rays(pixel_coords, pix2cam, cam2world)
   pixels = data['images'][cam_ind, y_ind, x_ind]
   return rays, pixels
@@ -554,8 +504,9 @@ if scene_type=="synthetic":
 
 elif scene_type=="zju":
 # TODO: modify scale for zju data
-  scene_grid_scale = 3.0
-  
+  scene_grid_scale = 1.2
+  if "hotdog" in scene_dir or "mic" in scene_dir or "ship" in scene_dir:
+    scene_grid_scale = 1.5
   grid_min = np.array([-1, -1, -1]) * scene_grid_scale
   grid_max = np.array([ 1,  1,  1]) * scene_grid_scale
   point_grid_size = 128
@@ -1494,11 +1445,6 @@ model_vars = [point_grid, acc_grid,
 point_grid = None
 acc_grid = None
 #%% --------------------------------------------------------------------------------
-# ## Load weights
-#%%
-vars = pickle.load(open(weights_dir+"/"+"weights_stage1.pkl", "rb"))
-model_vars = vars
-#%% --------------------------------------------------------------------------------
 # ## Main rendering functions
 #%%
 def compute_volumetric_rendering_weights_with_alpha(alpha):
@@ -1509,7 +1455,7 @@ def compute_volumetric_rendering_weights_with_alpha(alpha):
   weights = alpha * trans
   return weights
 
-def render_rays(rays, vars, keep_num, threshold, wbgcolor, rng): ### antialiasing by supersampling
+def render_rays(rays, vars, keep_num, threshold, wbgcolor, rng):
 
   #---------- ray-plane intersection points
   grid_indices, grid_masks = gridcell_from_rays(rays, vars[1], keep_num, threshold)
@@ -1530,41 +1476,35 @@ def render_rays(rays, vars, keep_num, threshold, wbgcolor, rng): ### antialiasin
   mlp_alpha = jax.nn.sigmoid(mlp_alpha[..., 0]-8)
   mlp_alpha = mlp_alpha * grid_masks
 
-  weights = compute_volumetric_rendering_weights_with_alpha(mlp_alpha) #[N,4,P]
-  acc = np.sum(weights, axis=-1) #[N,4]
-  acc = np.mean(acc, axis=-1) #[N]
+  weights = compute_volumetric_rendering_weights_with_alpha(mlp_alpha)
+  acc = np.sum(weights, axis=-1)
 
   mlp_alpha_b = mlp_alpha + jax.lax.stop_gradient(
     np.clip((mlp_alpha>0.5).astype(mlp_alpha.dtype), 0.00001,0.99999) - mlp_alpha)
-  weights_b = compute_volumetric_rendering_weights_with_alpha(mlp_alpha_b) #[N,4,P]
-  acc_b = np.sum(weights_b, axis=-1) #[N,4]
-  acc_b = np.mean(acc_b, axis=-1) #[N]
-
-  #deferred features
-  mlp_features_ = jax.nn.sigmoid(feature_model.apply(vars[-2], pts)) #[N,4,P,C]
-  mlp_features = np.sum(weights[..., None] * mlp_features_, axis=-2) #[N,4,C]
-  mlp_features = np.mean(mlp_features, axis=-2) #[N,C]
-  mlp_features_b = np.sum(weights_b[..., None] * mlp_features_, axis=-2) #[N,4,C]
-  mlp_features_b = np.mean(mlp_features_b, axis=-2) #[N,C]
-
+  weights_b = compute_volumetric_rendering_weights_with_alpha(mlp_alpha_b)
+  acc_b = np.sum(weights_b, axis=-1)
 
   # ... as well as view-dependent colors.
-  dirs = normalize(rays[1]) #[N,4,3]
-  dirs = np.mean(dirs, axis=-2) #[N,3]
-  features_dirs_enc = np.concatenate([mlp_features, dirs], axis=-1) #[N,C+3]
-  features_dirs_enc_b = np.concatenate([mlp_features_b, dirs], axis=-1) #[N,C+3]
-  rgb = jax.nn.sigmoid(color_model.apply(vars[-1], features_dirs_enc))
-  rgb_b = jax.nn.sigmoid(color_model.apply(vars[-1], features_dirs_enc_b))
+  dirs = normalize(rays[1])
+  dirs = np.broadcast_to(dirs[..., None, :], pts.shape)
+
+  #previous: (features+dirs)->MLP->(RGB)
+  mlp_features = jax.nn.sigmoid(feature_model.apply(vars[-2], pts))
+  features_dirs_enc = np.concatenate([mlp_features, dirs], axis=-1)
+  colors = jax.nn.sigmoid(color_model.apply(vars[-1], features_dirs_enc))
+
+  rgb = np.sum(weights[..., None] * colors, axis=-2)
+  rgb_b = np.sum(weights_b[..., None] * colors, axis=-2)
 
   # Composite onto the background color.
   if white_bkgd:
-    rgb = rgb * acc[..., None] + (1. - acc[..., None])
-    rgb_b = rgb_b * acc_b[..., None] + (1. - acc_b[..., None])
+    rgb = rgb + (1. - acc[..., None])
+    rgb_b = rgb_b + (1. - acc_b[..., None])
   else:
     bgc = random.randint(rng, [1], 0, 2).astype(bg_color.dtype) * wbgcolor + \
           bg_color * (1-wbgcolor)
-    rgb = rgb * acc[..., None] + (1. - acc[..., None]) * bgc
-    rgb_b = rgb_b * acc_b[..., None] + (1. - acc_b[..., None]) * bgc
+    rgb = rgb + (1. - acc[..., None]) * bgc
+    rgb_b = rgb_b + (1. - acc_b[..., None]) * bgc
 
   #get acc_grid_masks to update acc_grid
   acc_grid_masks = get_acc_grid_masks(pts, vars[1])
@@ -1574,7 +1514,7 @@ def render_rays(rays, vars, keep_num, threshold, wbgcolor, rng): ### antialiasin
 #%% --------------------------------------------------------------------------------
 # ## Set up pmap'd rendering for test time evaluation.
 #%%
-test_batch_size = 256*n_device
+test_batch_size = 1024*n_device
 test_keep_num = point_grid_size*3//4
 test_threshold = 0.1
 test_wbgcolor = 0.0
@@ -1584,22 +1524,21 @@ render_test_p = jax.pmap(lambda rays, vars: render_rays(
     rays, vars, test_keep_num, test_threshold, test_wbgcolor, rng),
     in_axes=(0, None))
 
-import numpy
 
-def render_test(rays, vars): ### antialiasing by supersampling
+def render_test(rays, vars):
   sh = rays[0].shape
   rays = [x.reshape((jax.local_device_count(), -1) + sh[1:]) for x in rays]
   out = render_test_p(rays, vars)
-  out = [numpy.reshape(numpy.array(out[i]),sh[:-2]+(-1,)) for i in range(4)]
+  out = [numpy.reshape(numpy.array(x),sh[:-1]+(-1,)) for x in out]
   return out
 
-def render_loop(rays, vars, chunk): ### antialiasing by supersampling
-  sh = list(rays[0].shape[:-2])
-  rays = [x.reshape([-1, 4, 3]) for x in rays]
+def render_loop(rays, vars, chunk):
+  sh = list(rays[0].shape[:-1])
+  rays = [x.reshape([-1, 3]) for x in rays]
   l = rays[0].shape[0]
   n = jax.local_device_count()
   p = ((l - 1) // n + 1) * n - l
-  rays = [np.pad(x, ((0,p),(0,0),(0,0))) for x in rays]
+  rays = [np.pad(x, ((0,p),(0,0))) for x in rays]
   outs = [render_test([x[i:i+chunk] for x in rays], vars)
           for i in range(0, rays[0].shape[0], chunk)]
   outs = [np.reshape(
@@ -1613,7 +1552,7 @@ if scene_type=="synthetic":
   preview_image_height = 800
 
 elif scene_type=="zju":
-  selected_test_index = 58
+  selected_test_index = 97
   preview_image_height = 512
 
 elif scene_type=="forwardfacing":
@@ -1632,11 +1571,11 @@ rgb = out[0]
 acc = out[1]
 rgb_b = out[2]
 acc_b = out[3]
-write_floatpoint_image(samples_dir+"/s2_0_"+str(0)+"_rgb.png",rgb)
-write_floatpoint_image(samples_dir+"/s2_0_"+str(0)+"_rgb_binarized.png",rgb_b)
-write_floatpoint_image(samples_dir+"/s2_0_"+str(0)+"_gt.png",gt)
-write_floatpoint_image(samples_dir+"/s2_0_"+str(0)+"_acc.png",acc)
-write_floatpoint_image(samples_dir+"/s2_0_"+str(0)+"_acc_binarized.png",acc_b)
+write_floatpoint_image(samples_dir+"/s1_"+str(0)+"_rgb.png",rgb)
+write_floatpoint_image(samples_dir+"/s1_"+str(0)+"_rgb_binarized.png",rgb_b)
+write_floatpoint_image(samples_dir+"/s1_"+str(0)+"_gt.png",gt)
+write_floatpoint_image(samples_dir+"/s1_"+str(0)+"_acc.png",acc)
+write_floatpoint_image(samples_dir+"/s1_"+str(0)+"_acc_binarized.png",acc_b)
 #%% --------------------------------------------------------------------------------
 # ## Training loop
 #%%
@@ -1669,10 +1608,8 @@ def train_step(state, rng, traindata, lr, wdistortion, wbinary, wbgcolor, batch_
     rgb_est, _, rgb_est_b, _, mlp_alpha, weights, points, fake_t, acc_grid_masks = render_rays(
         rays, vars, keep_num, threshold, wbgcolor, rng)
 
-    loss_color_l2_ = np.mean(np.square(rgb_est - pixels))
-    loss_color_l2 = loss_color_l2_ * (1-wbinary)
-    loss_color_l2_b_ = np.mean(np.square(rgb_est_b - pixels))
-    loss_color_l2_b = loss_color_l2_b_ * wbinary
+    loss_color_l2 = np.mean(np.square(rgb_est - pixels))
+    #loss_color_l2_b = np.mean(np.square(rgb_est_b - pixels))
 
     loss_acc = np.mean(np.maximum(jax.lax.stop_gradient(weights) - acc_grid_masks,0))
     loss_acc += np.mean(np.abs(vars[1])) *1e-5
@@ -1686,7 +1623,7 @@ def train_step(state, rng, traindata, lr, wdistortion, wbinary, wbgcolor, batch_
     point_mask = point_loss<(grid_max - grid_min)/point_grid_size/2
     point_loss = np.mean(np.where(point_mask, point_loss_in, point_loss_out))
 
-    return loss_color_l2 + loss_color_l2_b + loss_distortion + loss_acc + point_loss, loss_color_l2_b_
+    return loss_color_l2 + loss_distortion + loss_acc + point_loss, loss_color_l2
 
   grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
   (total_loss, color_loss_l2), grad = grad_fn(state.target)
@@ -1712,35 +1649,49 @@ print(f'starting at {step_init}')
 psnrs = []
 iters = []
 psnrs_test = []
-psnrs_b_test = []
 iters_test = []
 t_total = 0.0
 t_last = 0.0
 i_last = step_init
 
-training_iters = 400000
-train_psnr_max = 0.0
-
+# TODO: training the original required interations
+# training_iters = 200000
+# train_iters_cont = 300000
+# for faster validation
+training_iters = 50000
+train_iters_cont = 75000
+if scene_type=="real360":
+  training_iters = 300000
 
 print("Training")
 for i in tqdm(range(step_init, training_iters + 1)):
   t = time.time()
 
-  batch_size = test_batch_size
-  keep_num = test_keep_num
-  threshold = test_threshold
-  lr = 1e-5
-  wbinary = float(i)/training_iters
-  wbgcolor = 1.0
+  lr = lr_fn(i,train_iters_cont, 1e-3, 1e-5)
+  wbgcolor = min(1.0, float(i)/50000)
+  wbinary = 0.0
 
   if scene_type=="synthetic":
     wdistortion = 0.0
   elif scene_type=="zju":
     wdistortion = 0.0
   elif scene_type=="forwardfacing":
-    wdistortion = 0.01
+    wdistortion = 0.0 if i<10000 else 0.01
   elif scene_type=="real360":
-    wdistortion = 0.001
+    wdistortion = 0.0 if i<10000 else 0.001
+
+  if i<=50000:
+    batch_size = test_batch_size//4
+    keep_num = test_keep_num*4
+    threshold = -100000.0
+  elif i<=100000:
+    batch_size = test_batch_size//2
+    keep_num = test_keep_num*2
+    threshold = test_threshold
+  else:
+    batch_size = test_batch_size
+    keep_num = test_keep_num
+    threshold = test_threshold
 
   rng, key1, key2 = random.split(rng, 3)
   key2 = random.split(key2, n_device)
@@ -1763,19 +1714,10 @@ for i in tqdm(range(step_init, training_iters + 1)):
 
   # Logging
   if (i % 10000 == 0) and i > 0:
-    this_train_psnr = np.mean(np.array(psnrs[-5000:]))
-
-    #stop when iteration>200000 and the training psnr drops
-    if i>200000 and this_train_psnr<=train_psnr_max-0.001:
-      unreplicated_state = pickle.load(open(weights_dir+"/s2_0_"+"tmp_state"+str(i-10000)+".pkl", "rb"))
-      vars = unreplicated_state.target
-      break
-
-    train_psnr_max = max(this_train_psnr,train_psnr_max)
     gc.collect()
 
     unreplicated_state = flax.jax_utils.unreplicate(state)
-    pickle.dump(unreplicated_state, open(weights_dir+"/s2_0_"+"tmp_state"+str(i)+".pkl", "wb"))
+    pickle.dump(unreplicated_state, open(weights_dir+"/s1_"+"tmp_state"+str(i)+".pkl", "wb"))
 
     print('Current iteration %d, elapsed training time: %d min %d sec.'
           % (i, t_total // 60, int(t_total) % 60))
@@ -1800,29 +1742,26 @@ for i in tqdm(range(step_init, training_iters + 1)):
     rgb_b = out[2]
     acc_b = out[3]
     psnrs_test.append(-10 * np.log10(np.mean(np.square(rgb - gt))))
-    psnrs_b_test.append(-10 * np.log10(np.mean(np.square(rgb_b - gt))))
     iters_test.append(i)
 
     print("PSNR:")
-    print('  Training running average: %0.3f' % this_train_psnr)
-    print('  Test average: %0.3f' % psnrs_test[-1])
-    print('  Test binary average: %0.3f' % psnrs_b_test[-1])
+    print('  Training running average: %0.3f' % np.mean(np.array(psnrs[-200:])))
+    print('  Selected test image: %0.3f' % psnrs_test[-1])
 
     plt.figure()
     plt.title(i)
     plt.plot(iters, psnrs)
     plt.plot(iters_test, psnrs_test)
-    plt.plot(iters_test, psnrs_b_test)
     p = np.array(psnrs)
     plt.ylim(np.min(p) - .5, np.max(p) + .5)
     plt.legend()
-    plt.savefig(samples_dir+"/s2_0_"+str(i)+"_loss.png")
+    plt.savefig(samples_dir+"/s1_"+str(i)+"_loss.png")
 
-    write_floatpoint_image(samples_dir+"/s2_0_"+str(i)+"_rgb.png",rgb)
-    write_floatpoint_image(samples_dir+"/s2_0_"+str(i)+"_rgb_binarized.png",rgb_b)
-    write_floatpoint_image(samples_dir+"/s2_0_"+str(i)+"_gt.png",gt)
-    write_floatpoint_image(samples_dir+"/s2_0_"+str(i)+"_acc.png",acc)
-    write_floatpoint_image(samples_dir+"/s2_0_"+str(i)+"_acc_binarized.png",acc_b)
+    write_floatpoint_image(samples_dir+"/s1_"+str(i)+"_rgb.png",rgb)
+    write_floatpoint_image(samples_dir+"/s1_"+str(i)+"_rgb_binarized.png",rgb_b)
+    write_floatpoint_image(samples_dir+"/s1_"+str(i)+"_gt.png",gt)
+    write_floatpoint_image(samples_dir+"/s1_"+str(i)+"_acc.png",acc)
+    write_floatpoint_image(samples_dir+"/s1_"+str(i)+"_acc_binarized.png",acc_b)
 
 #%%
 #%% --------------------------------------------------------------------------------
@@ -1836,8 +1775,8 @@ framemasks = []
 print("Testing")
 for p in tqdm(render_poses):
   out = render_loop(camera_ray_batch(p, hwf), vars, test_batch_size)
-  frames.append(out[2])
-  framemasks.append(out[3])
+  frames.append(out[0])
+  framemasks.append(out[1])
 psnrs_test = [-10 * np.log10(np.mean(np.square(rgb - gt))) for (rgb, gt) in zip(frames, data['test']['images'])]
 print("Test set average PSNR: %f" % np.array(psnrs_test).mean())
 
@@ -1845,6 +1784,7 @@ print("Test set average PSNR: %f" % np.array(psnrs_test).mean())
 import jax.numpy as jnp
 import jax.scipy as jsp
 
+#copied from SNeRG
 def compute_ssim(img0,
                  img1,
                  max_val,
@@ -1925,289 +1865,4 @@ print("Test set average SSIM: %f" % np.array(ssim_values).mean())
 #%% --------------------------------------------------------------------------------
 # ## Save weights
 #%%
-pickle.dump(vars, open(weights_dir+"/"+"weights_stage2_0.pkl", "wb"))
-
-#%% --------------------------------------------------------------------------------
-# # Fix density and finetune color
-#%% --------------------------------------------------------------------------------
-# ## Load weights
-#%%
-vars = pickle.load(open(weights_dir+"/"+"weights_stage2_0.pkl", "rb"))
-model_vars = vars
-#%% --------------------------------------------------------------------------------
-# ## Main rendering functions
-#%%
-def render_rays(rays, vars, keep_num, threshold, wbgcolor, rng): ### antialiasing by supersampling
-
-  #---------- ray-plane intersection points
-  grid_indices, grid_masks = gridcell_from_rays(rays, vars[1], keep_num, threshold)
-
-  pts, grid_masks, points, fake_t = compute_undc_intersection(vars[0],
-                        grid_indices, grid_masks, rays, keep_num)
-
-  if scene_type=="forwardfacing":
-    fake_t = compute_t_forwardfacing(pts,grid_masks)
-  elif scene_type=="real360":
-    skybox_positions, skybox_masks = compute_box_intersection(rays)
-    pts = np.concatenate([pts,skybox_positions], axis=-2)
-    grid_masks = np.concatenate([grid_masks,skybox_masks], axis=-1)
-    pts, grid_masks, fake_t = sort_and_compute_t_real360(pts,grid_masks)
-
-  pts = jax.lax.stop_gradient(pts)
-
-  # Now use the MLP to compute density and features
-  mlp_alpha = density_model.apply(vars[-3], pts)
-  mlp_alpha = jax.nn.sigmoid(mlp_alpha[..., 0]-8)
-  mlp_alpha = mlp_alpha * grid_masks
-
-  mlp_alpha_b = (mlp_alpha>0.5).astype(mlp_alpha.dtype) #no gradient to density
-  weights_b = compute_volumetric_rendering_weights_with_alpha(mlp_alpha_b) #[N,4,P]
-  acc_b = np.sum(weights_b, axis=-1) #[N,4]
-  acc_b = np.mean(acc_b, axis=-1) #[N]
-
-  #deferred features
-  mlp_features_ = jax.nn.sigmoid(feature_model.apply(vars[-2], pts)) #[N,4,P,C]
-  mlp_features_b = np.sum(weights_b[..., None] * mlp_features_, axis=-2) #[N,4,C]
-  mlp_features_b = np.mean(mlp_features_b, axis=-2) #[N,C]
-
-
-  # ... as well as view-dependent colors.
-  dirs = normalize(rays[1]) #[N,4,3]
-  dirs = np.mean(dirs, axis=-2) #[N,3]
-  features_dirs_enc_b = np.concatenate([mlp_features_b, dirs], axis=-1) #[N,C+3]
-  rgb_b = jax.nn.sigmoid(color_model.apply(vars[-1], features_dirs_enc_b))
-
-  # Composite onto the background color.
-  if white_bkgd:
-    rgb_b = rgb_b * acc_b[..., None] + (1. - acc_b[..., None])
-  else:
-    bgc = random.randint(rng, [1], 0, 2).astype(bg_color.dtype) * wbgcolor + \
-          bg_color * (1-wbgcolor)
-    rgb_b = rgb_b * acc_b[..., None] + (1. - acc_b[..., None]) * bgc
-
-  return rgb_b, acc_b
-#%% --------------------------------------------------------------------------------
-# ## Set up pmap'd rendering for test time evaluation.
-#%%
-test_batch_size = 256*n_device
-test_keep_num = point_grid_size*3//4
-test_threshold = 0.1
-test_wbgcolor = 0.0
-
-
-render_test_p = jax.pmap(lambda rays, vars: render_rays(
-    rays, vars, test_keep_num, test_threshold, test_wbgcolor, rng),
-    in_axes=(0, None))
-
-import numpy
-
-def render_test(rays, vars): ### antialiasing by supersampling
-  sh = rays[0].shape
-  rays = [x.reshape((jax.local_device_count(), -1) + sh[1:]) for x in rays]
-  out = render_test_p(rays, vars)
-  out = [numpy.reshape(numpy.array(out[i]),sh[:-2]+(-1,)) for i in range(2)]
-  return out
-
-def render_loop(rays, vars, chunk): ### antialiasing by supersampling
-  sh = list(rays[0].shape[:-2])
-  rays = [x.reshape([-1, 4, 3]) for x in rays]
-  l = rays[0].shape[0]
-  n = jax.local_device_count()
-  p = ((l - 1) // n + 1) * n - l
-  rays = [np.pad(x, ((0,p),(0,0),(0,0))) for x in rays]
-  outs = [render_test([x[i:i+chunk] for x in rays], vars)
-          for i in range(0, rays[0].shape[0], chunk)]
-  outs = [np.reshape(
-      np.concatenate([z[i] for z in outs])[:l], sh + [-1]) for i in range(2)]
-  return outs
-
-# Make sure that everything works, by rendering an image from the test set
-
-if scene_type=="synthetic":
-  selected_test_index = 97
-  preview_image_height = 800
-
-elif scene_type=="zju":
-  selected_test_index = 58
-  preview_image_height = 512
-
-elif scene_type=="forwardfacing":
-  selected_test_index = 0
-  preview_image_height = 756//2
-
-elif scene_type=="real360":
-  selected_test_index = 0
-  preview_image_height = 840//2
-
-rays = camera_ray_batch(
-    data['test']['c2w'][selected_test_index], data['test']['hwf'])
-gt = data['test']['images'][selected_test_index]
-out = render_loop(rays, model_vars, test_batch_size)
-rgb_b = out[0]
-acc_b = out[1]
-write_floatpoint_image(samples_dir+"/s2_1_"+str(0)+"_rgb_binarized.png",rgb_b)
-write_floatpoint_image(samples_dir+"/s2_1_"+str(0)+"_gt.png",gt)
-write_floatpoint_image(samples_dir+"/s2_1_"+str(0)+"_acc_binarized.png",acc_b)
-#%% --------------------------------------------------------------------------------
-# ## Training loop
-#%%
-def train_step(state, rng, traindata, lr, wdistortion, wbinary, wbgcolor, batch_size, keep_num, threshold):
-  key, rng = random.split(rng)
-  rays, pixels = random_ray_batch(
-      key, batch_size // n_device, traindata)
-
-  def loss_fn(vars):
-    rgb_est_b, _ = render_rays(
-        rays, vars, keep_num, threshold, wbgcolor, rng)
-
-    loss_color_l2_b = np.mean(np.square(rgb_est_b - pixels))
-
-    return loss_color_l2_b, loss_color_l2_b
-
-  grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-  (total_loss, color_loss_l2), grad = grad_fn(state.target)
-  total_loss = jax.lax.pmean(total_loss, axis_name='batch')
-  color_loss_l2 = jax.lax.pmean(color_loss_l2, axis_name='batch')
-
-  grad = jax.lax.pmean(grad, axis_name='batch')
-  state = state.apply_gradient(grad, learning_rate=lr)
-
-  return state, color_loss_l2
-
-train_pstep = jax.pmap(train_step, axis_name='batch',
-                       in_axes=(0, 0, 0, None, None, None, None, None, None, None),
-                       static_broadcasted_argnums = (7,8,))
-traindata_p = flax.jax_utils.replicate(data['train'])
-state = flax.optim.Adam(**adam_kwargs).create(model_vars)
-
-step_init = state.state.step
-state = flax.jax_utils.replicate(state)
-print(f'starting at {step_init}')
-
-# Training loop
-psnrs = []
-iters = []
-psnrs_test = []
-psnrs_b_test = []
-iters_test = []
-t_total = 0.0
-t_last = 0.0
-i_last = step_init
-
-training_iters = 100000
-
-print("Training")
-for i in tqdm(range(step_init, training_iters + 1)):
-  t = time.time()
-
-  batch_size = test_batch_size
-  keep_num = test_keep_num
-  threshold = test_threshold
-  lr = 1e-5
-  wbinary = 0.5
-  wbgcolor = 1.0
-
-  if scene_type=="synthetic":
-    wdistortion = 0.0
-  elif scene_type=="zju":
-    wdistortion = 0.0
-  elif scene_type=="forwardfacing":
-    wdistortion = 0.01
-  elif scene_type=="real360":
-    wdistortion = 0.001
-
-  rng, key1, key2 = random.split(rng, 3)
-  key2 = random.split(key2, n_device)
-  state, color_loss_l2 = train_pstep(
-      state, key2, traindata_p,
-      lr,
-      wdistortion,
-      wbinary,
-      wbgcolor,
-      batch_size,
-      keep_num,
-      threshold
-      )
-
-  psnrs.append(-10. * np.log10(color_loss_l2[0]))
-  iters.append(i)
-
-  if i > 0:
-    t_total += time.time() - t
-
-  # Logging
-  if (i % 10000 == 0) and i > 0:
-    this_train_psnr = np.mean(np.array(psnrs[-5000:]))
-    gc.collect()
-
-    unreplicated_state = flax.jax_utils.unreplicate(state)
-    pickle.dump(unreplicated_state, open(weights_dir+"/s2_1_"+"tmp_state"+str(i)+".pkl", "wb"))
-
-    print('Current iteration %d, elapsed training time: %d min %d sec.'
-          % (i, t_total // 60, int(t_total) % 60))
-
-    print('Batch size: %d' % batch_size)
-    print('Keep num: %d' % keep_num)
-    t_elapsed = t_total - t_last
-    i_elapsed = i - i_last
-    t_last = t_total
-    i_last = i
-    print("Speed:")
-    print('  %0.3f secs per iter.' % (t_elapsed / i_elapsed))
-    print('  %0.3f iters per sec.' % (i_elapsed / t_elapsed))
-
-    vars = unreplicated_state.target
-    rays = camera_ray_batch(
-        data['test']['c2w'][selected_test_index], data['test']['hwf'])
-    gt = data['test']['images'][selected_test_index]
-    out = render_loop(rays, vars, test_batch_size)
-    rgb_b = out[0]
-    acc_b = out[1]
-    psnrs_b_test.append(-10 * np.log10(np.mean(np.square(rgb_b - gt))))
-    iters_test.append(i)
-
-    print("PSNR:")
-    print('  Training running average: %0.3f' % this_train_psnr)
-    print('  Test binary average: %0.3f' % psnrs_b_test[-1])
-
-    plt.figure()
-    plt.title(i)
-    plt.plot(iters, psnrs)
-    plt.plot(iters_test, psnrs_b_test)
-    p = np.array(psnrs)
-    plt.ylim(np.min(p) - .5, np.max(p) + .5)
-    plt.legend()
-    plt.savefig(samples_dir+"/s2_1_"+str(i)+"_loss.png")
-
-    write_floatpoint_image(samples_dir+"/s2_1_"+str(i)+"_rgb_binarized.png",rgb_b)
-    write_floatpoint_image(samples_dir+"/s2_1_"+str(i)+"_gt.png",gt)
-    write_floatpoint_image(samples_dir+"/s2_1_"+str(i)+"_acc_binarized.png",acc_b)
-
-#%% --------------------------------------------------------------------------------
-# ## Run test-set evaluation
-#%%
-gc.collect()
-
-render_poses = data['test']['c2w'][:len(data['test']['images'])]
-frames = []
-framemasks = []
-print("Testing")
-for p in tqdm(render_poses):
-  out = render_loop(camera_ray_batch(p, hwf), vars, test_batch_size)
-  frames.append(out[0])
-  framemasks.append(out[1])
-psnrs_test = [-10 * np.log10(np.mean(np.square(rgb - gt))) for (rgb, gt) in zip(frames, data['test']['images'])]
-print("Test set average PSNR: %f" % np.array(psnrs_test).mean())
-
-#%%
-ssim_values = []
-for i in range(len(data['test']['images'])):
-  ssim = ssim_fn(frames[i], data['test']['images'][i])
-  ssim_values.append(float(ssim))
-
-print("Test set average SSIM: %f" % np.array(ssim_values).mean())
-#%%
-#%% --------------------------------------------------------------------------------
-# ## Save weights
-#%%
-pickle.dump(vars, open(weights_dir+"/"+"weights_stage2_1.pkl", "wb"))
+pickle.dump(vars, open(weights_dir+"/"+"weights_stage1.pkl", "wb"))
