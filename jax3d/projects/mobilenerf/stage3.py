@@ -18,14 +18,14 @@ scene_type = "synthetic"
 object_name = "chair"
 exp_suffix = ''
 scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1' 
 
-scene_type = "zju"
-object_name = "freeview_0_cam430" 
-exp_suffix = '_dvgo_K_grid_scale_3.0'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
- # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
+# scene_type = "zju"
+# object_name = "freeview_0_cam430" 
+# exp_suffix = '_dvgo_K_grid_scale_3.0'
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+#  # testing 
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
 
 
 # synthetic
@@ -1038,7 +1038,9 @@ bag_of_v = []
 #synthetic and real360
 #up is z-
 #order: z-,x+,y+
-if scene_type=="synthetic" or scene_type=="real360" or scene_type=="zju": # TODO: may cause trouble due to inverse y of zju
+
+if scene_type=="synthetic" or scene_type=="real360": 
+  # st()
   for k in range(layer_num-1,-1,-1):
     for i in range(layer_num):
       for j in range(layer_num):
@@ -1121,8 +1123,93 @@ if scene_type=="synthetic" or scene_type=="real360" or scene_type=="zju": # TODO
 
             bag_of_v.append([p0,p1,p2,p3])
 
+#zju
+#up is z-
+#order: z-,x+,y-
 
+elif scene_type=="zju": # TODO: may cause trouble due to inverse y of zju
+  st()
+  for k in range(layer_num-1,-1,-1):
+    for i in range(layer_num-1,-1,-1):
+      for j in range(layer_num):
 
+        # z plane
+        if not(k==0 or k==layer_num-1 or i==layer_num-1 or j==layer_num-1):
+          feats = buffer_z[k]
+          if feats is not None and numpy.max(feats[0][i*quad_size:(i+1)*quad_size+1,j*quad_size:(j+1)*quad_size+1,2])>0:
+
+            write_patch_to_png(out_img,out_cell_num,out_img_w,i,j,feats)
+            uv0,uv1,uv2,uv3 = get_png_uv(out_cell_num,out_img_w,out_img_size)
+            out_cell_num += 1
+
+            p0 = v_grid[i,j,k] + (numpy.array([i,j,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p1 = v_grid[i+1,j,k] + (numpy.array([i+1,j,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p2 = v_grid[i,j+1,k] + (numpy.array([i,j+1,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p3 = v_grid[i+1,j+1,k] + (numpy.array([i+1,j+1,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+
+            p0 = inverse_taper_coord_numpy(p0)
+            p1 = inverse_taper_coord_numpy(p1)
+            p2 = inverse_taper_coord_numpy(p2)
+            p3 = inverse_taper_coord_numpy(p3)
+
+            point_UV_grid[i,j,k,2,0] = uv0
+            point_UV_grid[i,j,k,2,1] = uv1
+            point_UV_grid[i,j,k,2,2] = uv2
+            point_UV_grid[i,j,k,2,3] = uv3
+
+            bag_of_v.append([p0,p1,p2,p3])
+
+        # x plane
+        if not(i==0 or i==layer_num-1 or j==layer_num-1 or k==layer_num-1):
+          feats = buffer_x[i]
+          if feats is not None and numpy.max(feats[0][j*quad_size:(j+1)*quad_size+1,k*quad_size:(k+1)*quad_size+1,2])>0:
+
+            write_patch_to_png(out_img,out_cell_num,out_img_w,j,k,feats)
+            uv0,uv1,uv2,uv3 = get_png_uv(out_cell_num,out_img_w,out_img_size)
+            out_cell_num += 1
+
+            p0 = v_grid[i,j,k] + (numpy.array([i,j,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p1 = v_grid[i,j+1,k] + (numpy.array([i,j+1,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p2 = v_grid[i,j,k+1] + (numpy.array([i,j,k+1],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p3 = v_grid[i,j+1,k+1] + (numpy.array([i,j+1,k+1],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+
+            p0 = inverse_taper_coord_numpy(p0)
+            p1 = inverse_taper_coord_numpy(p1)
+            p2 = inverse_taper_coord_numpy(p2)
+            p3 = inverse_taper_coord_numpy(p3)
+
+            point_UV_grid[i,j,k,0,0] = uv0
+            point_UV_grid[i,j,k,0,1] = uv1
+            point_UV_grid[i,j,k,0,2] = uv2
+            point_UV_grid[i,j,k,0,3] = uv3
+
+            bag_of_v.append([p0,p1,p2,p3])
+
+        # y plane
+        if not(j==0 or j==layer_num-1 or i==layer_num-1 or k==layer_num-1):
+          feats = buffer_y[j]
+          if feats is not None and numpy.max(feats[0][i*quad_size:(i+1)*quad_size+1,k*quad_size:(k+1)*quad_size+1,2])>0:
+
+            write_patch_to_png(out_img,out_cell_num,out_img_w,i,k,feats)
+            uv0,uv1,uv2,uv3 = get_png_uv(out_cell_num,out_img_w,out_img_size)
+            out_cell_num += 1
+
+            p0 = v_grid[i,j,k] + (numpy.array([i,j,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p1 = v_grid[i+1,j,k] + (numpy.array([i+1,j,k],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p2 = v_grid[i,j,k+1] + (numpy.array([i,j,k+1],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+            p3 = v_grid[i+1,j,k+1] + (numpy.array([i+1,j,k+1],numpy.float32)+0.5)*((grid_max_numpy - grid_min_numpy)/point_grid_size) + grid_min_numpy
+
+            p0 = inverse_taper_coord_numpy(p0)
+            p1 = inverse_taper_coord_numpy(p1)
+            p2 = inverse_taper_coord_numpy(p2)
+            p3 = inverse_taper_coord_numpy(p3)
+
+            point_UV_grid[i,j,k,1,0] = uv0
+            point_UV_grid[i,j,k,1,1] = uv1
+            point_UV_grid[i,j,k,1,2] = uv2
+            point_UV_grid[i,j,k,1,3] = uv3
+
+            bag_of_v.append([p0,p1,p2,p3])
 
 
 #forwardfacing

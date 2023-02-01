@@ -27,6 +27,17 @@ scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
  # testing 
 os.environ['CUDA_VISIBLE_DEVICES'] = '3' 
 
+scene_type = "syn_zju"
+object_name = "freeview_0_blender_coord"
+exp_suffix = '_train_86'
+scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# testing 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+
+if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
+    # print("Shared by all syn/zju/_syn_zju..")
+    print("scene_type:", scene_type)
+
 
 # synthetic
 # chair drums ficus hotdog lego materials mic ship
@@ -91,7 +102,7 @@ elif scene_type=="forwardfacing":
   white_bkgd = False
 elif scene_type=="real360":
   white_bkgd = False
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
   white_bkgd = True
 
 
@@ -155,7 +166,7 @@ if scene_type=="synthetic":
     plt.axis('equal')
     plt.savefig(samples_dir+"/training_camera"+str(i)+".png")
 
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
 
   def load_zju(data_dir, split):
     with open(
@@ -539,7 +550,7 @@ def lr_fn(step, max_steps, lr0, lr1, lr_delay_steps=20000, lr_delay_mult=0.1):
 #%%
 #scene scales
 
-if scene_type=="synthetic":
+if scene_type=="synthetic" :
   scene_grid_scale = 1.2
   if "hotdog" in scene_dir or "mic" in scene_dir or "ship" in scene_dir:
     scene_grid_scale = 1.5
@@ -552,7 +563,7 @@ if scene_type=="synthetic":
   def inverse_taper_coord(p):
     return p
 
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
 # TODO: modify scale for zju data
   scene_grid_scale = 3.0
   
@@ -647,7 +658,7 @@ def get_acc_grid_masks(taper_positions, acc_grid):
 
 #compute ray-gridcell intersections
 
-if scene_type=="synthetic":
+if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
 
   def gridcell_from_rays(rays, acc_grid, keep_num, threshold):
     ray_origins = rays[0]
@@ -722,80 +733,6 @@ if scene_type=="synthetic":
 
     return grid_indices, grid_masks
 
-elif scene_type=="zju":
-
-  def gridcell_from_rays(rays, acc_grid, keep_num, threshold):
-    ray_origins = rays[0]
-    ray_directions = rays[1]
-
-    dtype = ray_origins.dtype
-    batch_shape = ray_origins.shape[:-1]
-    small_step = 1e-5
-    epsilon = 1e-5
-
-    ox = ray_origins[..., 0:1]
-    oy = ray_origins[..., 1:2]
-    oz = ray_origins[..., 2:3]
-
-    dx = ray_directions[..., 0:1]
-    dy = ray_directions[..., 1:2]
-    dz = ray_directions[..., 2:3]
-
-    dxm = (np.abs(dx)<epsilon).astype(dtype)
-    dym = (np.abs(dy)<epsilon).astype(dtype)
-    dzm = (np.abs(dz)<epsilon).astype(dtype)
-
-    #avoid zero div
-    dx = dx+dxm
-    dy = dy+dym
-    dz = dz+dzm
-
-    layers = np.arange(point_grid_size+1,dtype=dtype)/point_grid_size #[0,1]
-    layers = np.reshape(layers, [1]*len(batch_shape)+[point_grid_size+1])
-    layers = np.broadcast_to(layers, list(batch_shape)+[point_grid_size+1])
-
-    tx = ((layers*(grid_max[0]-grid_min[0])+grid_min[0])-ox)/dx
-    ty = ((layers*(grid_max[1]-grid_min[1])+grid_min[1])-oy)/dy
-    tz = ((layers*(grid_max[2]-grid_min[2])+grid_min[2])-oz)/dz
-
-    tx = tx*(1-dxm) + 1000*dxm
-    ty = ty*(1-dym) + 1000*dym
-    tz = tz*(1-dzm) + 1000*dzm
-
-    txyz = np.concatenate([tx, ty, tz], axis=-1)
-    txyzm = (txyz<=0).astype(dtype)
-    txyz = txyz*(1-txyzm) + 1000*txyzm
-
-
-    #compute mask from acc_grid
-    txyz = txyz + small_step
-    world_positions = ray_origins[..., None, :] + \
-                      ray_directions[..., None, :] * txyz[..., None]
-    acc_grid_masks = get_acc_grid_masks(world_positions, acc_grid)
-    #remove empty cells for faster training
-    txyzm = (acc_grid_masks<threshold).astype(dtype)
-    txyz = txyz*(1-txyzm) + 1000*txyzm
-
-    txyz = np.sort(txyz, axis=-1)
-    txyz = txyz[..., :keep_num]
-
-
-    world_positions = ray_origins[..., None, :] + \
-                      ray_directions[..., None, :] * txyz[..., None]
-
-
-    grid_positions = (world_positions - grid_min) * \
-                      (point_grid_size / (grid_max - grid_min) )
-
-    grid_masks = (grid_positions[..., 0]>=1) & (grid_positions[..., 0]<point_grid_size-1) \
-                & (grid_positions[..., 1]>=1) & (grid_positions[..., 1]<point_grid_size-1) \
-                & (grid_positions[..., 2]>=1) & (grid_positions[..., 2]<point_grid_size-1)
-
-    grid_positions = grid_positions*grid_masks[..., None] \
-              + np.logical_not(grid_masks[..., None]) #min=1,max=point_grid_size-2
-    grid_indices = grid_positions.astype(np.int32)
-
-    return grid_indices, grid_masks
 
 elif scene_type=="forwardfacing":
 
@@ -1612,7 +1549,7 @@ if scene_type=="synthetic":
   selected_test_index = 97
   preview_image_height = 800
 
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
   selected_test_index = 58
   preview_image_height = 512
 
@@ -1733,9 +1670,7 @@ for i in tqdm(range(step_init, training_iters + 1)):
   wbinary = float(i)/training_iters
   wbgcolor = 1.0
 
-  if scene_type=="synthetic":
-    wdistortion = 0.0
-  elif scene_type=="zju":
+  if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     wdistortion = 0.0
   elif scene_type=="forwardfacing":
     wdistortion = 0.01
@@ -2027,7 +1962,7 @@ if scene_type=="synthetic":
   selected_test_index = 97
   preview_image_height = 800
 
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
   selected_test_index = 58
   preview_image_height = 512
 
@@ -2107,9 +2042,7 @@ for i in tqdm(range(step_init, training_iters + 1)):
   wbinary = 0.5
   wbgcolor = 1.0
 
-  if scene_type=="synthetic":
-    wdistortion = 0.0
-  elif scene_type=="zju":
+  if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     wdistortion = 0.0
   elif scene_type=="forwardfacing":
     wdistortion = 0.01
