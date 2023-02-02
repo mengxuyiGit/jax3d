@@ -23,18 +23,19 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
 scene_type = "zju"
 object_name = "freeview_0_cam430" 
-exp_suffix = '_dvgo_K_grid_scale_3.0'
+exp_suffix = '_validate_zju'
 scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
 # testing 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
 
-# convert the cam coord of ZJU to blender
-scene_type = "syn_zju"
-object_name = "freeview_0_blender_coord"
-exp_suffix = '_train_86'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
-# testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+# # convert the cam coord of ZJU to blender
+# # scene_type = "syn_zju"
+# scene_type = "zju"
+# object_name = "freeview_0_blender_coord"
+# exp_suffix = '_neg_pose_to_zju'
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# # testing 
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
 
 if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     # print("Shared by all syn/zju/_syn_zju..")
@@ -199,7 +200,22 @@ elif scene_type=="zju" or scene_type=="syn_zju":
     paths = []
     for i in range(len(meta["frames"])):
       frame = meta["frames"][i]
-      cams.append(np.array(frame["transform_matrix"], dtype=np.float32))
+      if 'blender' in object_name:
+        st()
+        _pose_blender = np.array(frame["transform_matrix"], dtype=np.float32)
+        
+        inverse_pose_mul = np.array([
+          [1., 0, 0, 0],
+          [0, -1., 0, 0],
+          [0, 0, -1., 0],
+          [0, 0, 0, 1.],
+        ])
+        _pose = np.matmul(inverse_pose_mul, _pose_blender)
+        # print("before and after:", _pose_blender, _pose)
+        print(_pose.shape)
+        cams.append(_pose)
+      else:
+        cams.append(np.array(frame["transform_matrix"], dtype=np.float32))
 
       fname = os.path.join(data_dir, frame["file_path"] + ".png")
       paths.append(fname)
@@ -465,7 +481,7 @@ def sinusoidal_encoding(position, minimum_frequency_power,
 def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
 
-  if scene_type=='zju':
+  if scene_type=="zju":
     K = np.asarray([[537.1407,   0.0000, 271.4171],
             [  0.0000, 537.7115, 242.4418],
             [  0.0000,   0.0000,   1.0000]])
@@ -473,6 +489,25 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
     i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
     cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
   
+  elif scene_type=="syn_zju":
+    st()
+    print("generate rays syn_zju")
+    # K = np.asarray([[537.1407,   0.0000, 271.4171],
+    #         [  0.0000, 537.7115, 242.4418],
+    #         [  0.0000,   0.0000,   1.0000]])
+    # # print('scene_type==zju',pixel_coords.shape)
+    # i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
+    # cam_dirs = np.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
+
+    ### k from division
+    pix2cam = np.asarray([[1/537.1407,   0.0000, -271.4171/537.1407],
+        [  0.0000, -1/537.7115, 242.4418/537.7115],
+        [  0.0000,   0.0000,   -1.0000]])
+    homog = np.ones_like(pixel_coords[..., :1])
+    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
+    cam_dirs = matmul(pix2cam, pixel_dirs)
+    
+
   else:
     homog = np.ones_like(pixel_coords[..., :1])
     pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
@@ -490,29 +525,38 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
 
 def pix2cam_matrix(height, width, focal):
   """Inverse intrinsic matrix for a pinhole camera."""
-  if scene_type=="zju":
-    
-   # for ZJU Mocap
-    inverse_y_mul = np.array([
-      [1., 0, 0],
-      [0, -1., 0],
-      [0, 0, -1.],
-    ])
-    K_zju = np.asarray([[537.1407,   0.0000, 271.4171],
-            [  0.0000, 537.7115, 242.4418],
-            [  0.0000,   0.0000,   1.0000]])
-    inv_K = np.linalg.inv(K_zju)
-    # st()
-    return np.matmul(inv_K, inverse_y_mul)
+  ### The process for zju is moved to func "generate_rays"
+  # if scene_type=="zju":
+  #   print("only when inverse_y==True")
+  #  # for ZJU Mocap
+  #   inverse_y_mul = np.array([
+  #     [1., 0, 0],
+  #     [0, -1., 0],
+  #     [0, 0, -1.],
+  #   ])
+  #   K_zju = np.asarray([[537.1407,   0.0000, 271.4171],
+  #           [  0.0000, 537.7115, 242.4418],
+  #           [  0.0000,   0.0000,   1.0000]])
+  #   inv_K = np.linalg.inv(K_zju)
+  #   # st()
+  #   return np.matmul(inv_K, inverse_y_mul)
 
-    # return np.array([
-    #   [1./focal,    0,          .5 * width / focal],
-    #   [0,           1./focal,   -.5 * height / focal],
-    #   [0,           0,          1.],
-    # ])  this is wrong for ZJU !!! 
+  #   # return np.array([
+  #   #   [1./focal,    0,          .5 * width / focal],
+  #   #   [0,           1./focal,   -.5 * height / focal],
+  #   #   [0,           0,          1.],
+  #   # ])  this is wrong for ZJU !!! 
 
-  else:
-    return  np.array([
+  # if scene_type=="syn_zju":
+  #   print("Not derived from focal, but not inverse_y")
+  #   K_zju = np.asarray([[537.1407,   0.0000, 271.4171],
+  #           [  0.0000, 537.7115, 242.4418],
+  #           [  0.0000,   0.0000,   1.0000]])
+  #   inv_K = np.linalg.inv(K_zju)
+  #   return inv_K
+
+  # else:
+  return  np.array([
         [1./focal,  0,          -.5 * width / focal],
         [0,         -1./focal,  .5 * height / focal],
         [0,         0,          -1.],
