@@ -22,20 +22,19 @@ scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
 os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
 scene_type = "zju"
-object_name = "freeview_0_cam430" 
-exp_suffix = '_validate_zju'
+object_name = "freeview_128" 
+exp_suffix = '_new_commit'
 scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
 # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
-# # convert the cam coord of ZJU to blender
-# # scene_type = "syn_zju"
-# scene_type = "zju"
-# object_name = "freeview_0_blender_coord"
-# exp_suffix = '_neg_pose_to_zju'
-# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
-# # testing 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
+# convert the cam coord of ZJU to blender
+scene_type = "syn_zju" ## cam pose converted to blender during load_zju, then all the operations follows synthetic
+object_name = "freeview_128_blender"
+exp_suffix = '_new_commit'
+scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# testing 
+os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
 if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     # print("Shared by all syn/zju/_syn_zju..")
@@ -200,22 +199,24 @@ elif scene_type=="zju" or scene_type=="syn_zju":
     paths = []
     for i in range(len(meta["frames"])):
       frame = meta["frames"][i]
-      if 'blender' in object_name:
-        st()
-        _pose_blender = np.array(frame["transform_matrix"], dtype=np.float32)
+      # if 'blender' in object_name:
+      # if scene_type=='syn_zju':
+      #   st()
+      #   _pose_blender = np.array(frame["transform_matrix"], dtype=np.float32)
         
-        inverse_pose_mul = np.array([
-          [1., 0, 0, 0],
-          [0, -1., 0, 0],
-          [0, 0, -1., 0],
-          [0, 0, 0, 1.],
-        ])
-        _pose = np.matmul(inverse_pose_mul, _pose_blender)
-        # print("before and after:", _pose_blender, _pose)
-        print(_pose.shape)
-        cams.append(_pose)
-      else:
-        cams.append(np.array(frame["transform_matrix"], dtype=np.float32))
+      #   inverse_pose_mul = np.array([
+      #     [1., 0, 0, 0],
+      #     [0, -1., 0, 0],
+      #     [0, 0, -1., 0],
+      #     [0, 0, 0, 1.],
+      #   ])
+      #   _pose = np.matmul(inverse_pose_mul, _pose_blender)
+      #   print("before and after:", _pose_blender, _pose)
+      #   print(_pose.shape)
+      #   cams.append(_pose)
+      # else:
+
+      cams.append(np.array(frame["transform_matrix"], dtype=np.float32)) # whether the pose is in blender or opencv, they aredirectly stored in the data
 
       fname = os.path.join(data_dir, frame["file_path"] + ".png")
       paths.append(fname)
@@ -482,6 +483,7 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
 
   if scene_type=="zju":
+    st()
     K = np.asarray([[537.1407,   0.0000, 271.4171],
             [  0.0000, 537.7115, 242.4418],
             [  0.0000,   0.0000,   1.0000]])
@@ -490,8 +492,19 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
     cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
   
   elif scene_type=="syn_zju":
-    st()
-    print("generate rays syn_zju")
+    # st()
+    # print("generate rays syn_zju")
+    # cam_convert = np.array([
+    #         [1., 0., 0., 0.],
+    #         [0., -1., 0., 0.],
+    #         [0., 0., -1., 0.],
+    #         [0., 0., 0., 1.],
+    #     ])
+    
+    # try:
+    #   cam2world = np.matmul(cam_convert, cam2world)
+    # except:
+    #   st()
     # K = np.asarray([[537.1407,   0.0000, 271.4171],
     #         [  0.0000, 537.7115, 242.4418],
     #         [  0.0000,   0.0000,   1.0000]])
@@ -509,6 +522,7 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
     
 
   else:
+    st()
     homog = np.ones_like(pixel_coords[..., :1])
     pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
     cam_dirs = matmul(pix2cam, pixel_dirs)
