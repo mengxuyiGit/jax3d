@@ -20,12 +20,12 @@ exp_suffix = ''
 scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,1' 
 
-# scene_type = "zju"
-# object_name = "freeview_0_cam430" 
-# exp_suffix = '_dvgo_K_grid_scale_3.0'
-# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
-#  # testing 
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
+scene_type = "zju"
+object_name = "freeview_0_cam430" 
+exp_suffix = '_dvgo_K_grid_scale_3.0'
+scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+ # testing 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
 
 
 # synthetic
@@ -89,7 +89,7 @@ elif scene_type=="forwardfacing":
   white_bkgd = False
 elif scene_type=="real360":
   white_bkgd = False
-elif scene_type=="zju":
+elif scene_type=="zju" or scene_type=="syn_zju":
   white_bkgd = True
 
 
@@ -429,9 +429,30 @@ def sinusoidal_encoding(position, minimum_frequency_power,
 
 def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
-  homog = np.ones_like(pixel_coords[..., :1])
-  pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
-  cam_dirs = matmul(pix2cam, pixel_dirs)
+
+  if scene_type=='zju':
+    K = np.asarray([[537.1407,   0.0000, 271.4171],
+            [  0.0000, 537.7115, 242.4418],
+            [  0.0000,   0.0000,   1.0000]])
+    # print('scene_type==zju',pixel_coords.shape)
+    i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
+    cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
+
+  elif scene_type=='syn_zju':
+
+    ### k from division
+    pix2cam = np.asarray([[1/537.1407,   0.0000, -271.4171/537.1407],
+        [  0.0000, -1/537.7115, 242.4418/537.7115],
+        [  0.0000,   0.0000,   -1.0000]])
+    homog = np.ones_like(pixel_coords[..., :1])
+    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
+    cam_dirs = matmul(pix2cam, pixel_dirs)
+
+  else:
+    homog = np.ones_like(pixel_coords[..., :1])
+    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
+    cam_dirs = matmul(pix2cam, pixel_dirs)
+
   ray_dirs = matmul(cam2world[..., :3, :3], cam_dirs)[..., 0]
   ray_origins = np.broadcast_to(cam2world[..., :3, 3], ray_dirs.shape)
 
@@ -1128,9 +1149,12 @@ if scene_type=="synthetic" or scene_type=="real360":
 #order: z-,x+,y-
 
 elif scene_type=="zju": # TODO: may cause trouble due to inverse y of zju
-  st()
+  # st()
+  # for k in range(layer_num-1,-1,-1):
+  #   for i in range(layer_num-1,-1,-1):
+  #     for j in range(layer_num):
   for k in range(layer_num-1,-1,-1):
-    for i in range(layer_num-1,-1,-1):
+    for i in range(layer_num):
       for j in range(layer_num):
 
         # z plane
@@ -2630,7 +2654,7 @@ def copy_patch_to_png(out_img,out_cell_num,new_img,new_cell_num):
 
 #write mesh
 
-obj_save_dir = "obj"
+obj_save_dir = object_name+exp_suffix+"_obj" #obj
 if not os.path.exists(obj_save_dir):
   os.makedirs(obj_save_dir)
 
