@@ -199,22 +199,6 @@ elif scene_type=="zju" or scene_type=="syn_zju":
     paths = []
     for i in range(len(meta["frames"])):
       frame = meta["frames"][i]
-      # if 'blender' in object_name:
-      # if scene_type=='syn_zju':
-      #   st()
-      #   _pose_blender = np.array(frame["transform_matrix"], dtype=np.float32)
-        
-      #   inverse_pose_mul = np.array([
-      #     [1., 0, 0, 0],
-      #     [0, -1., 0, 0],
-      #     [0, 0, -1., 0],
-      #     [0, 0, 0, 1.],
-      #   ])
-      #   _pose = np.matmul(inverse_pose_mul, _pose_blender)
-      #   print("before and after:", _pose_blender, _pose)
-      #   print(_pose.shape)
-      #   cams.append(_pose)
-      # else:
 
       cams.append(np.array(frame["transform_matrix"], dtype=np.float32)) # whether the pose is in blender or opencv, they aredirectly stored in the data
 

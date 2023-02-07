@@ -452,14 +452,15 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
     cam_dirs = np.stack([(i-K[0][2])/K[0][0], (j-K[1][2])/K[1][1], np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
 
   elif scene_type=='syn_zju':
-    print("generate rays syn_zju")
-    K = np.asarray([[537.1407,   0.0000, 271.4171],
-            [  0.0000, 537.7115, 242.4418],
-            [  0.0000,   0.0000,   1.0000]])
-    # print('scene_type==zju',pixel_coords.shape)
-    i, j = pixel_coords[...,0] + .5, pixel_coords[...,1] + .5 
-    cam_dirs = np.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -np.ones_like(pixel_coords[..., 1])], -1)[..., None] # (512, 512, 3, 1)
-  
+
+    ### k from division
+    pix2cam = np.asarray([[1/537.1407,   0.0000, -271.4171/537.1407],
+        [  0.0000, -1/537.7115, 242.4418/537.7115],
+        [  0.0000,   0.0000,   -1.0000]])
+    homog = np.ones_like(pixel_coords[..., :1])
+    pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None] # (512, 512, 3, 1)
+    cam_dirs = matmul(pix2cam, pixel_dirs)
+
   else:
     homog = np.ones_like(pixel_coords[..., :1])
     pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
@@ -477,16 +478,8 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
 
 def pix2cam_matrix(height, width, focal):
   """Inverse intrinsic matrix for a pinhole camera."""
-  if scene_type=="syn_zju":
-    print("Not derived from focal, but not inverse_y")
-    K_zju = np.asarray([[537.1407,   0.0000, 271.4171],
-            [  0.0000, 537.7115, 242.4418],
-            [  0.0000,   0.0000,   1.0000]])
-    inv_K = np.linalg.inv(K_zju)
-    return inv_K
-
-  else:
-    return  np.array([
+  
+  return  np.array([
         [1./focal, 0, -.5 * width / focal],
         [0, -1./focal, .5 * height / focal],
         [0, 0, -1.],
