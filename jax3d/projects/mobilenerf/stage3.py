@@ -13,17 +13,34 @@
 # limitations under the License.
 
 import os
+from ipdb import set_trace as st
+import argparse
+
+parser = argparse.ArgumentParser(description="Process input data and write to output file")
+parser.add_argument("--exp_suffix", type=str, required=True, help="Path to the input file")
+parser.add_argument("--object_name", type=str, required=True, help="Path to the output file")
+parser.add_argument("--scene_base", type=str, required=True, help="Path to the output file")
+
+args = parser.parse_args()
+
 
 scene_type = "synthetic"
 object_name = "chair"
 exp_suffix = ''
 scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '2,1' 
 
 scene_type = "zju"
-object_name = "freeview_0_cam430" 
-exp_suffix = '_dvgo_K_grid_scale_3.0'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# exp_suffix = '_thu'
+# object_name = "freeview_wbkg_tpose_230"
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p377/"+object_name
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/arah/"+object_name
+# exp_suffix = '_new_commit'
+# object_name = "tpose_fullview430"
+exp_suffix=args.exp_suffix
+object_name=args.object_name
+scene_dir=args.scene_base+object_name
+
  # testing 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
 
@@ -984,7 +1001,8 @@ for i in range(layer_num):
 coarse_feature_y = None
 
 #%%
-write_floatpoint_image(samples_dir+"/s3_slice_sample.png",buffer_z[layer_num//2][0]/255.0)
+# st()
+# write_floatpoint_image(samples_dir+"/s3_slice_sample.png",buffer_z[layer_num//2][0]/255.0)
 #%%
 out_img_size = 1024*20
 out_img = []
@@ -2671,6 +2689,7 @@ for i in range(out_cell_num):
     new_cell_num += 1
 
     if scene_type=="synthetic" or scene_type=="real360" or scene_type=="zju":
+      # TODO: whyyyyyyyy????? save yz in reverse order???
       obj_f.write("v %.6f %.6f %.6f\n" % (p0[0],p0[2],-p0[1]))
       obj_f.write("v %.6f %.6f %.6f\n" % (p1[0],p1[2],-p1[1]))
       obj_f.write("v %.6f %.6f %.6f\n" % (p2[0],p2[2],-p2[1]))

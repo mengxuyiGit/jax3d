@@ -13,26 +13,37 @@
 # limitations under the License.
 
 import os
+import argparse
+
+parser = argparse.ArgumentParser(description="Process input data and write to output file")
+parser.add_argument("--exp_suffix", type=str, required=True, help="Path to the input file")
+parser.add_argument("--object_name", type=str, required=True, help="Path to the output file")
+parser.add_argument("--scene_base", type=str, required=True, help="Path to the output file")
+
+args = parser.parse_args()
 
 scene_type = "synthetic"
 object_name = "chair"
 exp_suffix = ''
 scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
 
 scene_type = "zju"
-object_name = "freeview_0_cam430" 
-exp_suffix = '_dvgo_K_grid_scale_3.0'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# exp_suffix = '_thu'
+# object_name = "freeview_wbkg_tpose_230"
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p377/"+object_name
+exp_suffix=args.exp_suffix
+object_name=args.object_name
+scene_dir=args.scene_base+object_name
  # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '3' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0' 
 
-scene_type = "syn_zju"
-object_name = "freeview_0_blender_coord"
-exp_suffix = '_train_86'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
-# testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+# scene_type = "syn_zju"
+# object_name = "freeview_0_blender_coord"
+# exp_suffix = '_train_86'
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# # testing 
+# os.environ['CUDA_VISIBLE_DEVICES'] = '2' 
 
 if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     # print("Shared by all syn/zju/_syn_zju..")
@@ -1007,7 +1018,7 @@ def compute_undc_intersection(point_grid, cell_xyz, masks, rays, keep_num):
   batch_shape = ray_origins.shape[:-1]
 
   ooxyz = (cell_xyz.astype(dtype)+0.5)*((grid_max - grid_min)/point_grid_size) + grid_min
-
+  # print("cell_xyz", cell_xyz) # int32[256,4,96,3]
   cell_x = cell_xyz[..., 0]
   cell_y = cell_xyz[..., 1]
   cell_z = cell_xyz[..., 2]
@@ -1310,6 +1321,7 @@ def compute_undc_intersection(point_grid, cell_xyz, masks, rays, keep_num):
 
 
 #use world_tx in taper coord, to avoid exponentially larger intervals
+
 def compute_t_forwardfacing(taper_positions,world_masks):
   world_tx = np.sum((taper_positions+(1-world_masks[..., None])*grid_max
                     -taper_positions[..., 0:1, :])**2, -1)**0.5
@@ -1666,7 +1678,8 @@ t_total = 0.0
 t_last = 0.0
 i_last = step_init
 
-training_iters = 400000
+# training_iters = 400000 TODO: recover full training iter
+training_iters = 200000
 train_psnr_max = 0.0
 
 
@@ -1974,7 +1987,7 @@ if scene_type=="synthetic":
   preview_image_height = 800
 
 elif scene_type=="zju" or scene_type=="syn_zju":
-  selected_test_index = 58
+  selected_test_index = 18
   preview_image_height = 512
 
 elif scene_type=="forwardfacing":

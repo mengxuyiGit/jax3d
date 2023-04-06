@@ -13,6 +13,17 @@
 # limitations under the License.
 
 import os
+from ipdb import set_trace as st
+
+import argparse
+
+parser = argparse.ArgumentParser(description="Process input data and write to output file")
+parser.add_argument("--exp_suffix", type=str, required=True, help="Path to the input file")
+parser.add_argument("--object_name", type=str, required=True, help="Path to the output file")
+parser.add_argument("--scene_base", type=str, required=True, help="Path to the output file")
+
+args = parser.parse_args()
+
 
 scene_type = "synthetic"
 object_name = "chair"
@@ -22,19 +33,26 @@ scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
 os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
 scene_type = "zju"
-object_name = "freeview_128" 
-exp_suffix = '_new_commit'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# object_name = "freeview_128" 
+# object_name = "tpose_fullview430"
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# exp_suffix = '_thu'
+# object_name = "freeview_wbkg_tpose_230"
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p377/"+object_name
+exp_suffix=args.exp_suffix
+object_name=args.object_name
+scene_dir=args.scene_base+object_name
 # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '2' 
 
-# convert the cam coord of ZJU to blender
-scene_type = "syn_zju" ## cam pose converted to blender during load_zju, then all the operations follows synthetic
-object_name = "freeview_128_blender"
-exp_suffix = '_new_commit'
-scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
-# testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
+
+# # convert the cam coord of ZJU to blender
+# scene_type = "syn_zju" ## cam pose converted to blender during load_zju, then all the operations follows synthetic
+# object_name = "freeview_128_blender"
+# exp_suffix = '_new_commit'
+# scene_dir = "/data/xymeng/Data/fyp/ZJU_MOCAP/p387/"+object_name
+# # testing 
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1' 
 
 if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
     # print("Shared by all syn/zju/_syn_zju..")
@@ -45,7 +63,7 @@ if scene_type=="synthetic" or scene_type=="zju" or scene_type=="syn_zju":
 # exp_suffix = '_synthetic_setting'
 # scene_dir = '/data/xymeng/Data/fyp/ZJU_MOCAP/'+object_name
 
-from ipdb import set_trace as st
+# from ipdb import set_trace as st
 
 # synthetic
 # chair drums ficus hotdog lego materials mic ship
@@ -81,7 +99,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from multiprocessing.pool import ThreadPool
 
-
+import pandas as pd
 
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 print(jax.local_devices())
@@ -91,6 +109,8 @@ print(jax.local_devices())
 weights_dir = os.path.join('experiments',object_name+exp_suffix, "weights")
 samples_dir = os.path.join('experiments',object_name+exp_suffix, "samples")
 print("Experiment results saved in", os.path.join('experiments',object_name+exp_suffix))
+
+
 if not os.path.exists(weights_dir):
   os.makedirs(weights_dir)
 if not os.path.exists(samples_dir):
@@ -161,6 +181,7 @@ if scene_type=="synthetic":
       images = images[..., :3] * images[..., -1:]
 
     h, w = images.shape[1:3]
+  
     camera_angle_x = float(meta["camera_angle_x"])
     focal = .5 * w / np.tan(.5 * camera_angle_x)
 
@@ -467,7 +488,7 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
   """Generate camera rays from pixel coordinates and poses."""
 
   if scene_type=="zju":
-    st()
+    # st()
     K = np.asarray([[537.1407,   0.0000, 271.4171],
             [  0.0000, 537.7115, 242.4418],
             [  0.0000,   0.0000,   1.0000]])
@@ -1604,7 +1625,7 @@ if scene_type=="synthetic":
 #   preview_image_height = 512
 
 elif scene_type=="zju" or scene_type=="syn_zju":
-  selected_test_index = 58
+  selected_test_index = 18
   preview_image_height = 512
 
 elif scene_type=="forwardfacing":
@@ -1707,7 +1728,9 @@ t_last = 0.0
 i_last = step_init
 
 # TODO: training the original required interations
-training_iters = 200000
+# training_iters = 200000
+# training_iters = 190001
+training_iters = 150000
 train_iters_cont = 300000
 # # for faster validation
 # training_iters = 50000
@@ -1717,6 +1740,11 @@ if scene_type=="real360":
 
 print("Training")
 for i in tqdm(range(step_init, training_iters + 1)):
+  # if not i>190000:
+  #   continue
+  # if i==190001:
+  #   state = pd.read_pickle(open(weights_dir+"/s1_"+"tmp_state"+str(i-1)+".pkl", "rb"))
+  #   print("Loading from saved pkl")
   t = time.time()
 
   lr = lr_fn(i,train_iters_cont, 1e-3, 1e-5)
@@ -1766,7 +1794,10 @@ for i in tqdm(range(step_init, training_iters + 1)):
   # Logging
   if (i % 10000 == 0) and i > 0:
     gc.collect()
-
+    # st()
+    # state = pickle.load(open(weights_dir+"/s1_"+"tmp_state"+str(i)+".pkl", "rb"))
+    # from jax._src.device_array import reconstruct_device_array
+    
     unreplicated_state = flax.jax_utils.unreplicate(state)
     pickle.dump(unreplicated_state, open(weights_dir+"/s1_"+"tmp_state"+str(i)+".pkl", "wb"))
 
