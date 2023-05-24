@@ -17,18 +17,18 @@ from ipdb import set_trace as st
 import argparse
 
 parser = argparse.ArgumentParser(description="Process input data and write to output file")
-parser.add_argument("--exp_suffix", type=str, required=True, help="Path to the input file")
-parser.add_argument("--object_name", type=str, required=True, help="Path to the output file")
-parser.add_argument("--scene_base", type=str, required=True, help="Path to the output file")
+parser.add_argument("--exp_suffix", type=str, required=False, default="_may_9", help="Path to the input file")
+parser.add_argument("--object_name", type=str, required=False, default="tpose_fullview430", help="Path to the output file")
+parser.add_argument("--scene_base", type=str, required=False, default="/data/xymeng/Data/fyp/ZJU_MOCAP/p387/", help="Path to the output file")
 
 args = parser.parse_args()
 
 
-scene_type = "synthetic"
-object_name = "chair"
-exp_suffix = ''
-scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
-os.environ['CUDA_VISIBLE_DEVICES'] = '2,1' 
+# scene_type = "synthetic"
+# object_name = "chair"
+# exp_suffix = ''
+# scene_dir = "/data/xymeng/Data/ucsd/nerf_synthetic/"+object_name
+# os.environ['CUDA_VISIBLE_DEVICES'] = '2,3'
 
 scene_type = "zju"
 # exp_suffix = '_thu'
@@ -42,7 +42,7 @@ object_name=args.object_name
 scene_dir=args.scene_base+object_name
 
  # testing 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,2' 
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1' 
 
 
 # synthetic
@@ -470,6 +470,7 @@ def generate_rays(pixel_coords, pix2cam, cam2world):
     pixel_dirs = np.concatenate([pixel_coords + .5, homog], axis=-1)[..., None]
     cam_dirs = matmul(pix2cam, pixel_dirs)
 
+  # st()
   ray_dirs = matmul(cam2world[..., :3, :3], cam_dirs)[..., 0]
   ray_origins = np.broadcast_to(cam2world[..., :3, 3], ray_dirs.shape)
 
@@ -501,7 +502,7 @@ def camera_ray_batch(cam2world, hwf): ### antialiasing by supersampling
   x_ind, y_ind = np.meshgrid(np.arange(width), np.arange(height))
   pixel_coords = np.stack([x_ind-0.25, y_ind-0.25, x_ind+0.25, y_ind-0.25,
                   x_ind-0.25, y_ind+0.25, x_ind+0.25, y_ind+0.25], axis=-1)
-  pixel_coords = np.reshape(pixel_coords, [height,width,4,2])
+  pixel_coords = np.reshape(pixel_coords, [height,width,4,2]) # "4" is for anti-aliasing
 
   return generate_rays(pixel_coords, pix2cam, cam2world)
 
@@ -2296,7 +2297,7 @@ def render_rays_get_uv(rays, vars, uv, alp):
   return acc_b, selected_uv
 
 def render_rays_get_color(rays, vars, mlp_features_b, acc_b):
-
+  
   mlp_features_b = mlp_features_b.astype(np.float32)/255 #[N,4,C]
   mlp_features_b = mlp_features_b  * acc_b[..., None] #[N,4,C]
   mlp_features_b = np.mean(mlp_features_b, axis=-2) #[N,C]
@@ -2391,6 +2392,132 @@ elif scene_type=="real360":
 
 rays = camera_ray_batch(
     data['test']['c2w'][selected_test_index], data['test']['hwf'])
+
+# TODO-hnUW: or deform the ways here, rather than inside the render_ray_test
+# since the order of ray points in the tensor is fixed, it is safe to accumulate them even if they are warped
+### began to warp rays
+import jax.numpy as jnp
+from jax.scipy.ndimage import map_coordinates
+def _sample_motion_fields_forward_warp(
+        pts,
+        motion_scale_Rs,
+        motion_Ts,
+        motion_weights_vol,
+        cnl_bbox_min_xyz, cnl_bbox_scale_xyz,
+        output_list):
+    orig_shape = list(pts.shape)
+    pts = pts.reshape(-1, 3)  # [N_rays x N_samples, 3]
+
+    # remove BG channel
+    motion_weights = motion_weights_vol[:-1]
+
+    weights_list = []
+    for i in range(motion_weights.shape[0]):  # for each motion in total 24 motions
+
+        # forward_warp:
+        pos = pts
+        pos = (pos - cnl_bbox_min_xyz[None, :]) \
+            * cnl_bbox_scale_xyz[None, :] - 1.0
+
+        # Use JAX's map_coordinates to replace torch's grid_sample
+        weights = map_coordinates(motion_weights[jnp.newaxis, i:i + 1, :, :, :], 
+                                  pos[jnp.newaxis, jnp.newaxis, jnp.newaxis, :, :], 
+                                  order=1)
+        weights = weights[0, 0, 0, 0, :, jnp.newaxis]  # (4194304, 1)
+        weights_list.append(weights)
+
+    backwarp_motion_weights = jnp.concatenate(weights_list, axis=-1)  # for each point, there is a weight for each motion
+    total_bases = backwarp_motion_weights.shape[-1]
+
+    backwarp_motion_weights_sum = jnp.sum(backwarp_motion_weights,
+                                          dim=-1, keepdims=True)
+    weighted_motion_fields = []
+    for i in range(total_bases):
+        # forward warp:
+        # using jax linalg: pos = linalg.matmul(linalg.inv(motion_scale_Rs[i, :, :]), (pts - motion_Ts[i, :]).T).T 
+        ## FIXME: modified using numpuy, potential risk in gradient flow
+        pos = np.linalg.matmul(np.linalg.inv(motion_scale_Rs[i, :, :]), (pts - motion_Ts[i, :]).T).T
+        pos = jnp.array(pos)
+        weighted_pos = backwarp_motion_weights[:, i:i + 1] * pos
+        weighted_motion_fields.append(weighted_pos)
+    x_skel = jnp.sum(
+        jnp.stack(weighted_motion_fields, dim=0), dim=0
+    ) / backwarp_motion_weights_sum.clip(min=0.0001)
+    # the final pos is the weighted avg of all motions
+    fg_likelihood_mask = backwarp_motion_weights_sum
+
+    x_skel = x_skel.reshape(orig_shape[:2] + [3])
+    backwarp_motion_weights = \
+        backwarp_motion_weights.reshape(orig_shape[:2] + [total_bases])
+    fg_likelihood_mask = fg_likelihood_mask.reshape(orig_shape[:2] + [1])
+
+    results = {}
+
+    if 'x_skel' in output_list:  # [N_rays x N_samples, 3]
+        results['x_skel'] = x_skel
+    if 'fg_likelihood_mask' in output_list:  # [N_rays x N_samples, 1]
+        results['fg_likelihood_mask'] = fg_likelihood_mask
+
+    return results
+   
+def sample_motion_fields_forward_warp_mobile_nerf(
+            rays,
+            motion_scale_Rs,
+            motion_Ts,
+            motion_weights_vol,
+            cnl_bbox_min_xyz,
+            cnl_bbox_scale_xyz,
+):
+  ## first reverse yz
+  rays = [ jnp.stack([_ray[..., 0], _ray[..., 2], _ray[..., 1]], axis=-1) for _ray in rays]
+  
+  ## begin warping
+  # reshape into (N, 3)
+  rays = [ x.reshape(1, -1, 3) for x in rays]
+  
+  # warping using weight vol
+  sample_motion_outs = []
+  for pts in rays:
+    mv_output = _sample_motion_fields_forward_warp(
+                      pts=pts,
+                      motion_scale_Rs=motion_scale_Rs[0], 
+                      motion_Ts=motion_Ts[0], 
+                      motion_weights_vol=motion_weights_vol,
+                      cnl_bbox_min_xyz=cnl_bbox_min_xyz, 
+                      cnl_bbox_scale_xyz=cnl_bbox_scale_xyz,
+                      output_list=['x_skel', 'fg_likelihood_mask'])
+    pts_mask = mv_output['fg_likelihood_mask']
+    cnl_pts = mv_output['x_skel'].reshape(-1,3)
+    sample_motion_outs.append(cnl_pts)
+  
+  rays = sample_motion_outs
+
+  ## recover shape
+  rays = [ x.reshape(512,512, 4,3) for x in rays]
+  ## last reverse yz
+  rays = [ jnp.stack([_ray[..., 0], _ray[..., 2], _ray[..., 1]], axis=-1) for _ray in rays]
+
+warp_rays = True
+if warp_rays:
+  import numpy as np
+  # Load data from the saved file
+  param_fname = '/data/xymeng/Repo/humannerf/sample_motion_arrays.npz'
+  with np.load(param_fname) as hn_params:
+      jax_arrays = {key: jnp.array(value) for key, value in hn_params.items()}
+  # Create variables with the same name as the dictionary keys and assign the JAX arrays
+  for key, value in jax_arrays.items():
+      exec(f"{key} = value")
+  # st()
+  # warp the points
+  rays = sample_motion_fields_forward_warp_mobile_nerf(
+    rays=rays,
+    motion_scale_Rs=motion_scale_Rs,
+    motion_Ts=motion_Ts,
+    motion_weights_vol=motion_weights_vol,
+    cnl_bbox_min_xyz=cnl_bbox_min_xyz,
+    cnl_bbox_scale_xyz=cnl_bbox_scale_xyz,
+  )
+  
 gt = data['test']['images'][selected_test_index]
 out = render_loop(rays, model_vars, point_UV_grid, texture_alpha, texture_features, test_batch_size)
 rgb = out[0]
